@@ -39,3 +39,10 @@ export const tourUpdateSchema = tourSchema
 export const bookingStatusSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "CANCELLED"]),
 });
+
+export const aiRecommendSchema = z.object({
+  interests: z.string().trim().min(2).max(300),
+  budget: z.coerce.number().int().min(1).max(1_000_000),
+  durationDays: z.coerce.number().int().min(1).max(14),
+  preferredLocation: z.string().trim().max(100).optional(),
+});
