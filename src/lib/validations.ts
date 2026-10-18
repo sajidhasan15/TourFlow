@@ -26,3 +26,16 @@ export const tourUpdateSchema = tourSchema
   .refine((data) => Object.keys(data).length > 0, {
     message: "Provide at least one field to update",
   });
+
+
+  export const bookingSchema = z.object({
+  tourId: z.string().min(1),
+  guests: z.coerce.number().int().min(1).max(20),
+  travelDate: z.coerce.date().refine((date) => date.getTime() > Date.now(), {
+    message: "Travel date must be in the future",
+  }),
+});
+
+export const bookingStatusSchema = z.object({
+  status: z.enum(["PENDING", "CONFIRMED", "CANCELLED"]),
+});
