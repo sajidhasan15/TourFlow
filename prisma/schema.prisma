@@ -18,16 +18,17 @@ model User {
 }
 
 model Tour {
-  id           String    @id @default(cuid())
-  title        String    @unique
-  description  String
-  location     String
-  durationDays Int
-  price        Int
-  category     String
-  imageUrl     String?
-  bookings     Booking[]
-  createdAt    DateTime  @default(now())
+  id            String    @id @default(cuid())
+  title         String    @unique
+  description   String
+  location      String
+  durationDays  Int
+  price         Int
+  availableSeats Int      @default(20)
+  category      String
+  imageUrl      String?
+  bookings      Booking[]
+  createdAt     DateTime  @default(now())
 }
 
 model Booking {

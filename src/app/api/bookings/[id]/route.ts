@@ -34,21 +34,77 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const existing = await prisma.booking.findUnique({ where: { id } });
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.booking.findUnique({ where: { id } });
 
-    if (!existing) {
+      if (!current) {
+        return { error: "NOT_FOUND" } as const;
+      }
+
+      if (current.status === "CANCELLED" && parsed.data.status !== "CANCELLED") {
+        return { error: "ALREADY_CANCELLED" } as const;
+      }
+
+      if (current.status === parsed.data.status) {
+        const booking = await tx.booking.findUnique({
+          where: { id },
+          include: { tour: true },
+        });
+        return { booking } as const;
+      }
+
+      const changed = await tx.booking.updateMany({
+        where: { id, status: current.status },
+        data: { status: parsed.data.status },
+      });
+
+      if (changed.count !== 1) {
+        return { error: "CONFLICT" } as const;
+      }
+
+      if (parsed.data.status === "CANCELLED") {
+        await tx.tour.update({
+          where: { id: current.tourId },
+          data: { availableSeats: { increment: current.guests } },
+        });
+      }
+
+      const booking = await tx.booking.findUnique({
+        where: { id },
+        include: { tour: true },
+      });
+
+      return { booking } as const;
+    });
+
+    if ("error" in result && result.error === "NOT_FOUND") {
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
 
-    const booking = await prisma.booking.update({
-      where: { id },
-      data: { status: parsed.data.status },
-      include: { tour: true },
-    });
+    if ("error" in result && result.error === "ALREADY_CANCELLED") {
+      return NextResponse.json(
+        { error: "A cancelled booking cannot be reactivated" },
+        { status: 409 },
+      );
+    }
 
-    return NextResponse.json(booking);
+    if ("error" in result && result.error === "CONFLICT") {
+      return NextResponse.json(
+        { error: "Booking status changed; reload and try again" },
+        { status: 409 },
+      );
+    }
+
+    if ("booking" in result) {
+      return NextResponse.json(result.booking);
+    }
+
+    return NextResponse.json({ error: "Could not update booking" }, { status: 500 });
   } catch (error) {
     console.error("Update booking error:", error);
-    return NextResponse.json({ error: "Could not update booking" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Could not update booking" },
+      { status: 500 },
+    );
   }
 }

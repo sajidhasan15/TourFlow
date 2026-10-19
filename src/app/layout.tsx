@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { Metadata } from "next";
+import Navbar from "./Navbar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,16 +13,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <header className="site-header">
-          <nav className="nav-inner">
-            <Link className="logo" href="/">TourFlow</Link>
-            <div className="nav-links">
-              <Link href="/">Explore</Link>
-              <Link href="/dashboard">Dashboard</Link>
-              <Link className="nav-cta" href="/login">Sign in</Link>
-            </div>
-          </nav>
-        </header>
+        <Navbar />
         {children}
       </body>
     </html>

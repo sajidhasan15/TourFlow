@@ -2,19 +2,23 @@ import { describe, expect, it } from "vitest";
 import { calculateBookingPrice } from "../src/lib/pricing";
 
 describe("calculateBookingPrice", () => {
-  it("charges the regular price for groups under five", () => {
-    expect(calculateBookingPrice(8500, 2)).toBe(17000);
+  it("charges the regular price for one traveler", () => {
+    expect(calculateBookingPrice(1000, 1)).toBe(1000);
   });
 
-  it("applies a 10% discount to groups of five to nine", () => {
-    expect(calculateBookingPrice(8500, 5)).toBe(38250);
+  it("does not discount groups of three", () => {
+    expect(calculateBookingPrice(1000, 3)).toBe(3000);
   });
 
-  it("applies a 15% discount to groups of ten or more", () => {
-    expect(calculateBookingPrice(14500, 10)).toBe(123250);
+  it("applies 10% discount starting at four travelers", () => {
+    expect(calculateBookingPrice(1000, 4)).toBe(3600);
   });
 
-  it("rejects invalid guest counts", () => {
-    expect(() => calculateBookingPrice(8500, 0)).toThrow();
+  it("rejects zero travelers", () => {
+    expect(() => calculateBookingPrice(1000, 0)).toThrow();
+  });
+
+  it("rejects invalid prices", () => {
+    expect(() => calculateBookingPrice(-100, 2)).toThrow();
   });
 });

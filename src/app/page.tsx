@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Tour = {
   id: string;
@@ -10,6 +11,14 @@ type Tour = {
   durationDays: number;
   price: number;
   category: string;
+  availableSeats?: number;
+};
+
+type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
 };
 
 type Recommendation = {
@@ -18,47 +27,138 @@ type Recommendation = {
   message?: string;
 };
 
+type BookingFeedback = {
+  type: "success" | "error";
+  message: string;
+};
+
+const TRIP_VIBES = [
+  { label: "🌊 Sea & beaches", value: "Sea and beaches" },
+  { label: "⛰️ Hills & trekking", value: "Hills and trekking" },
+  { label: "🍃 Tea gardens & nature", value: "Tea gardens and nature" },
+  { label: "🛶 Rivers, haor & boat stays", value: "Rivers, haor and boat stays" },
+  { label: "🏛️ History & heritage", value: "History and heritage" },
+  { label: "🏨 Relaxing resort stay", value: "Relaxing resort stay" },
+  { label: "🍲 Local food & culture", value: "Local food and culture" },
+];
+
 export default function HomePage() {
+  const router = useRouter();
+
   const [tours, setTours] = useState<Tour[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const [selectedVibes, setSelectedVibes] = useState<string[]>([]);
   const [preferences, setPreferences] = useState({
     interests: "",
     budget: "12000",
     durationDays: "3",
     preferredLocation: "",
+    travelCompanion: "solo",
+    startingFrom: "Dhaka",
+    travelPace: "standard",
   });
+
   const [result, setResult] = useState<Recommendation | null>(null);
   const [bookingTour, setBookingTour] = useState<Tour | null>(null);
   const [additionalGuests, setAdditionalGuests] = useState("1");
   const [travelDate, setTravelDate] = useState("");
+  const [bookingError, setBookingError] = useState("");
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const [feedback, setFeedback] = useState<BookingFeedback | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch("/api/tours")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load tours");
-        setTours(await response.json());
-      })
-      .catch(() => setError("Could not load tours. Refresh to try again."));
+    let cancelled = false;
+
+    async function loadPage() {
+      try {
+        const [tourResponse, meResponse] = await Promise.all([
+          fetch("/api/tours"),
+          fetch("/api/auth/me"),
+        ]);
+
+        if (!tourResponse.ok) {
+          throw new Error("Could not load tours");
+        }
+
+        const loadedTours = (await tourResponse.json()) as Tour[];
+        const meData = meResponse.ok ? await meResponse.json() : null;
+
+        if (cancelled) return;
+
+        setTours(loadedTours);
+        setUser(meData?.user ?? null);
+
+        // Sign-in শেষে return করলে আগের tour-এর booking modal আবার খুলবে।
+        const params = new URLSearchParams(window.location.search);
+        const tourId = params.get("bookTour");
+        const selectedTour = loadedTours.find((tour) => tour.id === tourId);
+
+        if (selectedTour) {
+          setBookingTour(selectedTour);
+          setTravelDate(params.get("travelDate") ?? "");
+          setAdditionalGuests(params.get("additionalGuests") ?? "1");
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load tours. Refresh to try again.");
+        }
+      } finally {
+        if (!cancelled) setAuthChecked(true);
+      }
+    }
+
+    void loadPage();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  function toggleVibe(value: string) {
+    setSelectedVibes((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value],
+    );
+  }
 
   async function recommend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+
+    const interests = [...selectedVibes, preferences.interests.trim()]
+      .filter(Boolean)
+      .join(", ");
+
+    if (!interests) {
+      setError("Choose at least one trip vibe or describe what you enjoy.");
+      return;
+    }
+
     setBusy(true);
+    setResult(null);
 
     try {
       const response = await fetch("/api/ai-recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...preferences,
+          interests,
           budget: Number(preferences.budget),
           durationDays: Number(preferences.durationDays),
+          preferredLocation: preferences.preferredLocation,
+          travelCompanion: preferences.travelCompanion,
+          startingFrom: preferences.startingFrom,
+          travelPace: preferences.travelPace,
         }),
       });
 
       const data = await response.json();
+
       if (!response.ok) {
         throw new Error(data.error ?? "Could not recommend a trip");
       }
@@ -71,11 +171,29 @@ export default function HomePage() {
     }
   }
 
-  async function book(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function goToSignIn() {
     if (!bookingTour) return;
 
-    setError("");
+    const returnTo =
+      `/?bookTour=${encodeURIComponent(bookingTour.id)}` +
+      `&travelDate=${encodeURIComponent(travelDate)}` +
+      `&additionalGuests=${encodeURIComponent(additionalGuests)}`;
+
+    router.push(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+  }
+
+  async function book(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBookingError("");
+
+    if (!user) {
+      setBookingError("Please sign in before completing this booking.");
+      return;
+    }
+
+    if (!bookingTour) return;
+
+    setBookingBusy(true);
 
     try {
       const response = await fetch("/api/bookings", {
@@ -89,19 +207,41 @@ export default function HomePage() {
       });
 
       const data = await response.json();
+
+      if (response.status === 401) {
+        setUser(null);
+        setBookingError("Your session has expired. Sign in to continue.");
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(data.error ?? "Could not book this tour");
       }
 
       setBookingTour(null);
-      setError("Booking created! View its status on your dashboard.");
+      setFeedback({
+        type: "success",
+        message:
+          "Your booking was created. You can check its status on your dashboard.",
+      });
+
+      // Seat count সঙ্গে সঙ্গে refresh করো।
+      const toursResponse = await fetch("/api/tours");
+      if (toursResponse.ok) {
+        setTours((await toursResponse.json()) as Tour[]);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setFeedback({
+        type: "error",
+        message: err instanceof Error ? err.message : "Something went wrong",
+      });
+    } finally {
+      setBookingBusy(false);
     }
   }
 
   const recommendedIds = new Set(
-    result?.recommendations.map((tour) => tour.id),
+    result?.recommendations.map((tour) => tour.id) ?? [],
   );
 
   return (
@@ -116,32 +256,60 @@ export default function HomePage() {
       </section>
 
       <section className="section panel">
-        <h2>Get a trip recommendation</h2>
+        <p className="form-eyebrow">YOUR PERSONAL TRIP PLANNER</p>
+        <h2>Plan your perfect getaway</h2>
         <p className="muted">
-          Tell us what you enjoy and your per-person budget in BDT.
+          Share your travel style, duration and estimated budget—we’ll find
+          tours that fit and create a personalized itinerary.
         </p>
 
         <form onSubmit={recommend}>
           <div className="form-grid">
-            <label className="field-label">
-              Interests
-              <input
-                className="input"
-                required
+            <div className="field-label field-full">
+              What kind of vibe or activities are you looking for?
+
+              <div className="chip-list">
+                {TRIP_VIBES.map((vibe) => {
+                  const selected = selectedVibes.includes(vibe.value);
+
+                  return (
+                    <button
+                      key={vibe.value}
+                      type="button"
+                      className={`chip ${selected ? "chip-selected" : ""}`}
+                      aria-pressed={selected}
+                      onClick={() => toggleVibe(vibe.value)}
+                    >
+                      {vibe.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <textarea
+                className="textarea"
+                maxLength={120}
                 value={preferences.interests}
-                placeholder="Tea gardens, beaches, food..."
+                placeholder="Or add your own: quiet mornings, photography, local food..."
                 onChange={(e) =>
-                  setPreferences({ ...preferences, interests: e.target.value })
+                  setPreferences({
+                    ...preferences,
+                    interests: e.target.value,
+                  })
                 }
               />
-            </label>
+
+              <span className="form-helper">
+                Pick any that fit, then add a detail if you like.
+              </span>
+            </div>
 
             <label className="field-label">
-              Preferred location (optional)
+              Any destination in mind? <span className="muted">Optional</span>
               <input
                 className="input"
                 value={preferences.preferredLocation}
-                placeholder="Sylhet"
+                placeholder="e.g., Sylhet, Cox’s Bazar, Bandarban"
                 onChange={(e) =>
                   setPreferences({
                     ...preferences,
@@ -149,24 +317,35 @@ export default function HomePage() {
                   })
                 }
               />
+              <span className="form-helper">
+                Leave blank if you’re open to surprises.
+              </span>
             </label>
 
             <label className="field-label">
-              Budget per person (BDT)
+              Estimated budget per person (BDT)
               <input
                 className="input"
                 type="number"
                 min="1"
+                step="1"
                 required
                 value={preferences.budget}
+                placeholder="e.g., 12,000"
                 onChange={(e) =>
-                  setPreferences({ ...preferences, budget: e.target.value })
+                  setPreferences({
+                    ...preferences,
+                    budget: e.target.value,
+                  })
                 }
               />
+              <span className="form-helper">
+                Set your approximate maximum budget.
+              </span>
             </label>
 
             <label className="field-label">
-              Maximum trip length (days)
+              How many days do you have?
               <input
                 className="input"
                 type="number"
@@ -174,6 +353,7 @@ export default function HomePage() {
                 max="14"
                 required
                 value={preferences.durationDays}
+                placeholder="e.g., 3"
                 onChange={(e) =>
                   setPreferences({
                     ...preferences,
@@ -182,11 +362,67 @@ export default function HomePage() {
                 }
               />
             </label>
+
+            <label className="field-label">
+              Who are you traveling with?
+              <select
+                className="select"
+                value={preferences.travelCompanion}
+                onChange={(e) =>
+                  setPreferences({
+                    ...preferences,
+                    travelCompanion: e.target.value,
+                  })
+                }
+              >
+                <option value="solo">Solo</option>
+                <option value="couple">Couple</option>
+                <option value="family">Family with kids</option>
+                <option value="friends">Friends group</option>
+              </select>
+            </label>
+
+            <label className="field-label">
+              Where will you start from?
+              <select
+                className="select"
+                value={preferences.startingFrom}
+                onChange={(e) =>
+                  setPreferences({
+                    ...preferences,
+                    startingFrom: e.target.value,
+                  })
+                }
+              >
+                <option value="Dhaka">Dhaka</option>
+                <option value="Chattogram">Chattogram</option>
+                <option value="Sylhet">Sylhet</option>
+                <option value="Other">Somewhere else</option>
+              </select>
+            </label>
+
+            <label className="field-label">
+              What travel pace feels right?
+              <select
+                className="select"
+                value={preferences.travelPace}
+                onChange={(e) =>
+                  setPreferences({
+                    ...preferences,
+                    travelPace: e.target.value,
+                  })
+                }
+              >
+                <option value="budget">Budget / backpacking</option>
+                <option value="standard">Comfortable / standard</option>
+                <option value="luxury">Luxury / relaxed</option>
+              </select>
+            </label>
           </div>
 
           <div className="form-actions">
             <button className="button" disabled={busy}>
-              {busy ? "Planning..." : "Recommend a trip"}
+              {busy ? "Creating your plan..." : "Generate my trip plan ✨"}
             </button>
           </div>
         </form>
@@ -195,7 +431,7 @@ export default function HomePage() {
 
         {result?.recommendations.length ? (
           <div className="section">
-            <h3>Recommended for you</h3>
+            <h3>Your best matches</h3>
             <p>
               {result.recommendations.map((tour) => tour.title).join(" · ")}
             </p>
@@ -204,7 +440,7 @@ export default function HomePage() {
         ) : null}
       </section>
 
-      {error && <p className="notice">{error}</p>}
+      {error && <p className="notice notice-error">{error}</p>}
 
       <section className="section">
         <h2>Explore tours</h2>
@@ -225,13 +461,26 @@ export default function HomePage() {
                 {tour.durationDays} day{tour.durationDays === 1 ? "" : "s"}
               </p>
 
+              {typeof tour.availableSeats === "number" && (
+                <p className="muted">
+                  {tour.availableSeats > 0
+                    ? `${tour.availableSeats} seats available`
+                    : "Sold out"}
+                </p>
+              )}
+
               <div className="price-row">
                 <strong>৳{tour.price.toLocaleString()} / person</strong>
                 <button
                   className="button"
-                  onClick={() => setBookingTour(tour)}
+                  type="button"
+                  disabled={tour.availableSeats === 0}
+                  onClick={() => {
+                    setBookingError("");
+                    setBookingTour(tour);
+                  }}
                 >
-                  Book
+                  {tour.availableSeats === 0 ? "Sold out" : "Book"}
                 </button>
               </div>
             </article>
@@ -243,6 +492,14 @@ export default function HomePage() {
         <div className="modal-backdrop">
           <form className="modal" onSubmit={book}>
             <h2>Book {bookingTour.title}</h2>
+
+            {!authChecked ? (
+              <p className="notice">Checking your sign-in status...</p>
+            ) : !user ? (
+              <p className="notice notice-error" role="alert">
+                You need to sign in before you can book this tour.
+              </p>
+            ) : null}
 
             <label className="field-label">
               Travel date
@@ -264,7 +521,10 @@ export default function HomePage() {
                 className="input"
                 type="number"
                 min="0"
-                max="19"
+                max={Math.max(
+                  0,
+                  Math.min(19, (bookingTour.availableSeats ?? 20) - 1),
+                )}
                 required
                 value={additionalGuests}
                 onChange={(e) => setAdditionalGuests(e.target.value)}
@@ -275,12 +535,30 @@ export default function HomePage() {
               </span>
             </label>
 
-            <p className="muted">
-              Sign in first if the booking request is rejected.
-            </p>
+            {bookingError && (
+              <p className="notice notice-error" role="alert">
+                {bookingError}
+              </p>
+            )}
 
             <div className="form-actions">
-              <button className="button">Confirm booking</button>
+              {authChecked && !user ? (
+                <button
+                  type="button"
+                  className="button"
+                  onClick={goToSignIn}
+                >
+                  Sign in to book
+                </button>
+              ) : (
+                <button
+                  className="button"
+                  disabled={!authChecked || bookingBusy}
+                >
+                  {bookingBusy ? "Booking..." : "Confirm booking"}
+                </button>
+              )}
+
               <button
                 type="button"
                 className="button secondary"
@@ -290,6 +568,36 @@ export default function HomePage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {feedback && (
+        <div className="modal-backdrop">
+          <section
+            className="modal"
+            role="alertdialog"
+            aria-labelledby="booking-feedback-title"
+          >
+            <h2 id="booking-feedback-title">
+              {feedback.type === "success"
+                ? "Booking successful"
+                : "Booking error"}
+            </h2>
+
+            <p
+              className={`notice ${
+                feedback.type === "success"
+                  ? "notice-success"
+                  : "notice-error"
+              }`}
+            >
+              {feedback.message}
+            </p>
+
+            <button className="button" onClick={() => setFeedback(null)}>
+              Close
+            </button>
+          </section>
         </div>
       )}
     </main>

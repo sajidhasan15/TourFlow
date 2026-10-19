@@ -28,9 +28,9 @@ export const tourUpdateSchema = tourSchema
   });
 
 
-  export const bookingSchema = z.object({
+ export const bookingSchema = z.object({
   tourId: z.string().min(1),
-  guests: z.coerce.number().int().min(1).max(20),
+  additionalGuests: z.coerce.number().int().min(0).max(19),
   travelDate: z.coerce.date().refine((date) => date.getTime() > Date.now(), {
     message: "Travel date must be in the future",
   }),
@@ -45,4 +45,7 @@ export const aiRecommendSchema = z.object({
   budget: z.coerce.number().int().min(1).max(1_000_000),
   durationDays: z.coerce.number().int().min(1).max(14),
   preferredLocation: z.string().trim().max(100).optional(),
+  travelCompanion: z.enum(["solo", "couple", "family", "friends"]).default("solo"),
+  startingFrom: z.enum(["Dhaka", "Chattogram", "Sylhet", "Other"]).default("Dhaka"),
+  travelPace: z.enum(["budget", "standard", "luxury"]).default("standard"),
 });

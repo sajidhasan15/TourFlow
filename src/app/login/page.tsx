@@ -24,7 +24,13 @@ export default function LoginPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Request failed");
-      router.push("/dashboard");
+      const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+
+        if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
+          router.push(returnTo);
+        } else {
+          router.push("/dashboard");
+        }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
